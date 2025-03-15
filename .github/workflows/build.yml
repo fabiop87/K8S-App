@@ -1,0 +1,54 @@
+name: Build .exe
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: Build .exe
+      run: |
+        # Recupera a versão do Python em uso e a versão do commit/tag
+        PYTHON_VERSION=$(python --version | awk '{print $2}')
+        COMMIT_HASH=$(git rev-parse --short HEAD)
+        TAG_NAME=$(git describe --tags --abbrev=0 || echo "v0.0.0")  # Usa a tag mais recente, se existir
+        OUTPUT_NAME="app_${TAG_NAME}_${COMMIT_HASH}.exe"
+
+        echo "Building with Python version: $PYTHON_VERSION"
+        echo "Using tag: $TAG_NAME and commit hash: $COMMIT_HASH"
+
+        # Executa o PyInstaller com as variáveis
+        pyinstaller --onefile --icon=icon.ico --windowed --name=$OUTPUT_NAME kubectlUtil.py  # Corrigido o nome da variável
+
+    - name: Upload .exe as artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: app-build
+        path: dist/*.exe  # Caminho para o arquivo .exe gerado
+
+    - name: Create Release
+      id: create_release
+      run: |
+        # Cria a release com o nome baseado na tag
+        gh release create $TAG_NAME dist/*.exe --title "Release $TAG_NAME" --notes "Release build com o commit $COMMIT_HASH"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
