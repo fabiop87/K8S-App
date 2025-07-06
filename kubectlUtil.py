@@ -1,265 +1,157 @@
 import tkinter as tk
-from tkinter import  ttk, scrolledtext, filedialog, messagebox, simpledialog #Label, PhotoImage,
+from tkinter import ttk, scrolledtext, filedialog, messagebox, simpledialog
 import subprocess
 import os
-#from PIL import Image, ImageTk
 
-def run_command(command):
-    """
-    Executa um comando no terminal e captura a saída.
-    """
-    try:
-        result = subprocess.run(command, shell=True, text=True, capture_output=True, check=True)
-        return result.stdout.strip().split('\n')
-    except subprocess.CalledProcessError as e:
-        messagebox.showerror("Erro", f"Erro ao executar comando:\n{e.stderr.strip()}")
+class K8SApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("K8S Util")
+        self.root.geometry("600x500")
+
+        self.context_var = tk.StringVar()
+        self.namespace_var = tk.StringVar()
+        self.pod_var = tk.StringVar()
+        self.all_namespaces = []
+
+        self.build_ui()
+        self.update_contexts()
+
+    def build_ui(self):
+        ttk.Label(self.root, text="Contexto:").pack(pady=5)
+        self.context_dropdown = ttk.Combobox(self.root, textvariable=self.context_var, width=60)
+        self.context_dropdown.pack(pady=5)
+
+        ttk.Button(self.root, text="Atualizar Contextos", command=self.update_contexts).pack(pady=2)
+        ttk.Button(self.root, text="Selecionar Contexto", command=self.select_context).pack(pady=2)
+
+        ttk.Label(self.root, text="Namespace:").pack(pady=5)
+        self.namespace_dropdown = ttk.Combobox(self.root, textvariable=self.namespace_var, width=60)
+        self.namespace_dropdown.pack(pady=5)
+        self.namespace_dropdown.bind("<KeyRelease>", self.filter_namespaces)
+        self.namespace_dropdown.bind("<<ComboboxSelected>>", self.update_pods)
+
+        ttk.Label(self.root, text="Pod:").pack(pady=5)
+        self.pod_dropdown = ttk.Combobox(self.root, textvariable=self.pod_var, width=60)
+        self.pod_dropdown.pack(pady=5)
+
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="Visualizar Log", command=self.view_log).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Salvar Log", command=self.save_log).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Descrever Pod", command=self.describe_pod).grid(row=0, column=2, padx=5)
+        ttk.Button(button_frame, text="Conectar Bash", command=self.connect_bash).grid(row=1, column=0, padx=5, pady=5)
+        ttk.Button(button_frame, text="Port Forward", command=self.port_forward).grid(row=1, column=1, padx=5, pady=5)
+        ttk.Button(button_frame, text="Visualizar Serviços", command=self.view_services).grid(row=1, column=2, padx=5, pady=5)
+
+        self.log_output = scrolledtext.ScrolledText(self.root, width=100, height=20, font=("Segoe UI", 10))
+        self.log_output.pack(pady=10)
+        self.log_output.insert("1.0", r"""
+ /\_/\      /\_/\
+( o.o )    ( o.o )
+------      -----
+""")
+
+    def run_command(self, command):
+        try:
+            result = subprocess.run(command, shell=True, text=True, capture_output=True, check=True)
+            return result.stdout.strip().split('\n')
+        except subprocess.CalledProcessError as e:
+            messagebox.showerror("Erro", f"Erro ao executar comando:\n{e.stderr.strip()}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro inesperado:\n{str(e)}")
         return []
-    except Exception as e:
-        messagebox.showerror("Erro", f"Erro inesperado:\n{str(e)}")
-        return []
 
-def run_command_in_cmd(command, keep_open=False):
-    """
-    Executa um comando diretamente em uma nova janela do terminal (cmd ou bash).
-    """
-    if keep_open:
-        if os.name == 'nt':  # Windows
-            subprocess.Popen(f'start cmd.exe /K {command}', shell=True)
-        else:  # Linux/MacOS
-            subprocess.Popen(f'xterm -hold -e {command}', shell=True)
-    else:
-        if os.name == 'nt':  # Windows
-            subprocess.Popen(f'start cmd.exe /C {command}', shell=True)
+    def run_command_in_terminal(self, command, keep_open=False):
+        if os.name == 'nt':
+            terminal_cmd = f'start cmd.exe /{"K" if keep_open else "C"} {command}'
         else:
-            subprocess.Popen(f'xterm -e {command}', shell=True)
+            terminal_cmd = f'xterm {"-hold" if keep_open else ""} -e {command}'
+        subprocess.Popen(terminal_cmd, shell=True)
 
+    def update_contexts(self):
+        contexts = self.run_command("kubectl config get-contexts -o name")
+        self.context_dropdown['values'] = contexts
+        current = self.run_command("kubectl config current-context")
+        if current:
+            self.context_var.set(current[0])
+            self.select_context()
 
-def get_current_context():
-    """
-    Obtém o contexto atual do kubectl.
-    """
-    try:
-        current_context = run_command("kubectl config current-context")
-        if current_context:
-            return current_context[0]  # Retorna o nome do contexto como string
-        else:
-            messagebox.showwarning("Aviso", "Nenhum contexto atual encontrado!")
-            return ""
-    except Exception as e:
-        messagebox.showerror("Erro", f"Erro ao obter o contexto atual: {e}")
-        return ""
+    def select_context(self):
+        context = self.context_var.get()
+        if not context:
+            messagebox.showwarning("Aviso", "Selecione um contexto!")
+            return
+        self.run_command(f"kubectl config use-context {context}")
+        messagebox.showinfo("Sucesso", f"Contexto '{context}' selecionado!")
+        self.update_namespaces()
 
-def update_contexts():
-    contexts = run_command("kubectl config get-contexts -o name")
-    context_var.set('')
-    context_dropdown['values'] = contexts
+    def update_namespaces(self):
+        self.all_namespaces = self.run_command("kubectl get namespaces -o custom-columns=:metadata.name")
+        self.namespace_dropdown['values'] = self.all_namespaces
 
-    # Configurar o contexto atual ao iniciar
-    current_context = get_current_context()
-    if current_context:
-        context_var.set(current_context)  # Define o contexto atual no Combobox
-        select_context()  # Atualiza automaticamente namespaces e configurações
+    def filter_namespaces(self, event):
+        text = self.namespace_var.get().lower()
+        filtered = [ns for ns in self.all_namespaces if text in ns.lower()]
+        self.namespace_dropdown['values'] = filtered
 
+    def update_pods(self, _=None):
+        namespace = self.namespace_var.get()
+        if not namespace:
+            return
+        pods = self.run_command(f"kubectl get pods --namespace {namespace} -o custom-columns=:metadata.name")
+        self.pod_dropdown['values'] = pods
+        self.pod_var.set('' if not pods else pods[0])
 
-def select_context():
-    context = context_var.get()
-    if not context:
-        messagebox.showwarning("Aviso", "Selecione um contexto!")
-        return
-    run_command(f"kubectl config use-context {context}")
-    messagebox.showinfo("Sucesso", f"Contexto '{context}' selecionado!")
-    update_namespaces()
+    def view_log(self):
+        self.show_output(f"kubectl logs --namespace {self.namespace_var.get()} {self.pod_var.get()}")
 
-def update_namespaces():
-    global all_namespaces  # Armazena a lista completa de namespaces para filtragem
-    all_namespaces = run_command("kubectl get namespaces -o custom-columns=:metadata.name")
-    if all_namespaces:
-        namespace_var.set('')
-        namespace_dropdown['values'] = all_namespaces
-    else:
-        namespace_dropdown['values'] = []
-        messagebox.showwarning("Aviso", "Nenhum namespace encontrado!")
-
-def filter_namespaces(event):
-    """
-    Filtra a lista de namespaces com base no que foi digitado.
-    """
-    typed_text = namespace_var.get().lower()
-    filtered_namespaces = [ns for ns in all_namespaces if typed_text in ns.lower()]
-    namespace_dropdown['values'] = filtered_namespaces
-
-def auto_select_namespace(event):
-    """
-    Auto-seleciona o primeiro namespace que começa com a letra pressionada.
-    """
-    typed_char = event.char.lower()
-    for ns in all_namespaces:
-        if ns.lower().startswith(typed_char):
-            namespace_var.set(ns)
-            update_pods()
-            break
-
-def update_pods(event=None):
-    namespace = namespace_var.get()
-    if not namespace:
-        return
-    pods = run_command(f"kubectl get pods --namespace {namespace} -o custom-columns=:metadata.name")
-    pod_var.set('')
-    pod_dropdown['values'] = pods
-
-def view_services():
-    """
-    Exibe os serviços (services) do namespace selecionado.
-    """
-    namespace = namespace_var.get()
-    if not namespace:
-        messagebox.showwarning("Aviso", "Selecione um namespace!")
-        return
-    log_output.delete("1.0", tk.END)
-    services = run_command(f"kubectl get svc --namespace {namespace}")
-    log_output.insert(tk.END, '\n'.join(services))
-
-def view_log():
-    namespace, pod = namespace_var.get(), pod_var.get()
-    if not namespace or not pod:
-        messagebox.showwarning("Aviso", "Selecione um namespace e um pod!")
-        return
-    log_output.delete("1.0", tk.END)
-    logs = run_command(f"kubectl logs --namespace {namespace} {pod}")
-    log_output.insert(tk.END, '\n'.join(logs))
-
-def save_log():
-    namespace, pod = namespace_var.get(), pod_var.get()
-    if not namespace or not pod:
-        messagebox.showwarning("Aviso", "Selecione um namespace e um pod!")
-        return
-    file_path = filedialog.asksaveasfilename(defaultextension=".log", filetypes=[("Log Files", "*.log"), ("All Files", "*.*")])
-    if file_path:
-        with open(file_path, "w", encoding="utf-8") as file:
-            logs = run_command(f"kubectl logs --namespace {namespace} {pod}")
-            file.write('\n'.join(logs))
+    def save_log(self):
+        path = filedialog.asksaveasfilename(defaultextension=".log", filetypes=[("Log Files", "*.log"), ("All Files", "*.*")])
+        if not path:
+            return
+        logs = self.run_command(f"kubectl logs --namespace {self.namespace_var.get()} {self.pod_var.get()}")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('\n'.join(logs))
         messagebox.showinfo("Sucesso", "Log salvo com sucesso!")
 
-def describe_pod():
-    namespace, pod = namespace_var.get(), pod_var.get()
-    if not namespace or not pod:
-        messagebox.showwarning("Aviso", "Selecione um namespace e um pod!")
-        return
-    output = run_command(f"kubectl describe pod --namespace {namespace} {pod}")
-    log_output.delete("1.0", tk.END)
-    log_output.insert(tk.END, '\n'.join(output))
+    def describe_pod(self):
+        self.show_output(f"kubectl describe pod --namespace {self.namespace_var.get()} {self.pod_var.get()}")
 
-def port_forward():
-    namespace, pod = namespace_var.get(), pod_var.get()
-    if not namespace or not pod:
-        messagebox.showwarning("Aviso", "Selecione um namespace e um pod!")
-        return
+    def view_services(self):
+        self.show_output(f"kubectl get svc --namespace {self.namespace_var.get()}")
 
-    if "postgres" in pod:
-        port = "5432"
-    elif "redis" in pod:
-        port = "6379"
-    else:
-        messagebox.showwarning("Aviso", "O pod selecionado não é PostgreSQL nem Redis!")
-        return
+    def port_forward(self):
+        namespace, pod = self.namespace_var.get(), self.pod_var.get()
+        if "postgres" in pod:
+            port = "5432"
+        elif "redis" in pod:
+            port = "6379"
+        else:
+            messagebox.showwarning("Aviso", "O pod selecionado não é PostgreSQL nem Redis!")
+            return
 
-    local_port = simpledialog.askstring("Port Forward", "Informe a porta local:", initialvalue="666")
-    if local_port:
-        command = f"kubectl port-forward --namespace {namespace} {pod} {local_port}:{port}"
-        
-        # Logando as informações no output
-        log_message = f"\n[INFO] Iniciando Port Forward:\n- Namespace: {namespace}\n- Pod: {pod}\n- Porta Local: {local_port}\n"
-        log_output.insert(tk.END, log_message)
-        log_output.yview(tk.END)  # Rolando a tela para a nova linha
+        local_port = simpledialog.askstring("Port Forward", "Informe a porta local:", initialvalue="666")
+        if not local_port:
+            return
+        self.log_output.insert(tk.END, f"\n[INFO] Port Forward: {pod} → localhost:{local_port}\n")
+        self.run_command_in_terminal(f"kubectl port-forward --namespace {namespace} {pod} {local_port}:{port}", keep_open=True)
 
-        run_command_in_cmd(command, keep_open=True)
-        messagebox.showinfo("Port Forward", f"Redirecionamento iniciado na porta {local_port}")
+    def connect_bash(self):
+        self.run_command_in_terminal(
+            f"kubectl exec --namespace {self.namespace_var.get()} -it {self.pod_var.get()} -- bash",
+            keep_open=True
+        )
 
-
-def connect_bash():
-    namespace, pod = namespace_var.get(), pod_var.get()
-    if not namespace or not pod:
-        messagebox.showwarning("Aviso", "Selecione um namespace e um pod!")
-        return
-    command = f"kubectl exec --namespace {namespace} -it {pod} -- bash"
-    run_command_in_cmd(command, keep_open=True)
-
-# Interface gráfica
-root = tk.Tk()
-root.title("K8S Util")
-root.geometry("600x500")
-
-# # Ícone da janela
-# icone = PhotoImage(file="k8s.png")
-# root.iconphoto(True, icone)
-
-# # Carregar e redimensionar a imagem
-# imagem_original = Image.open("k8s.png")  # Abre a imagem
-# imagem_redimensionada = imagem_original.resize((60, 50))
-# icone = ImageTk.PhotoImage(imagem_redimensionada)  # Converte para formato do Tkinter
-
-# # Criar um Label com a imagem redimensionada
-# label_icone = Label(root, image=icone)
-# label_icone.place(x=10, y=10)  # Posicionar no canto superior esquerdo
-
-# # Alterar a fonte global para "Segoe UI"
-# default_font = ("Segoe UI", 10)
-# root.option_add("*Font", default_font)
-
-# Variáveis e Comboboxes
-context_var = tk.StringVar()
-namespace_var = tk.StringVar()
-pod_var = tk.StringVar()
-
-# Contexto
-tk.Label(root, text="Contexto:").pack(pady=5)
-context_dropdown = ttk.Combobox(root, textvariable=context_var, state="normal", width=60)
-context_dropdown.pack(pady=5)
-
-tk.Button(root, text="Atualizar Contextos", command=update_contexts).pack(pady=5)
-tk.Button(root, text="Selecionar Contexto", command=select_context).pack(pady=5)
-
-# Namespaces e Pods
-tk.Label(root, text="Namespace:").pack(pady=5)
-namespace_dropdown = ttk.Combobox(root, textvariable=namespace_var, state="normal", width=60)
-namespace_dropdown.pack(pady=5)
-namespace_dropdown.bind("<KeyRelease>", filter_namespaces)  # Filtra conforme o texto digitado
-#namespace_dropdown.bind("<KeyPress>", auto_select_namespace)  # Seleção automática por tecla pressionada
-namespace_dropdown.bind("<<ComboboxSelected>>", update_pods)
-
-tk.Label(root, text="Pod:").pack(pady=5)
-pod_dropdown = ttk.Combobox(root, textvariable=pod_var, state="normal", width=60)
-pod_dropdown.pack(pady=5)
-
-# Botões principais
-button_frame = tk.Frame(root)
-button_frame.pack(pady=10)
-
-tk.Button(button_frame, text="Visualizar Log", command=view_log).grid(row=0, column=0, padx=5)
-tk.Button(button_frame, text="Salvar Log", command=save_log).grid(row=0, column=1, padx=5)
-tk.Button(button_frame, text="Descrever Pod", command=describe_pod).grid(row=0, column=2, padx=5)
-tk.Button(button_frame, text="Conectar Bash", command=connect_bash).grid(row=1, column=0, padx=5, pady=5)
-tk.Button(button_frame, text="Port Forward", command=port_forward).grid(row=1, column=1, padx=5, pady=5)
-tk.Button(button_frame, text="Visualizar Serviços", command=view_services).grid(row=1, column=2, padx=5, pady=5)
-
-# Área de saída para logs e serviços
-log_output = scrolledtext.ScrolledText(root, width=100, height=20)
-log_output.pack(pady=10)
-
-# Inicializar contextos e namespaces
-all_namespaces = []  # Variável global para armazenar todos os namespaces
-update_contexts()
+    def show_output(self, command):
+        self.log_output.delete("1.0", tk.END)
+        result = self.run_command(command)
+        if result:
+            self.log_output.insert(tk.END, "\n".join(result))
 
 
-
-capivara_ascii = r"""
- /\_/\      /\_/\  
-( o.o )    ( o.o ) 
- > ^ <     > ^ <
-
-"""
-
-log_output.insert("1.0", capivara_ascii)
-
-
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = K8SApp(root)
+    root.mainloop()
