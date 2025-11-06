@@ -23,24 +23,26 @@ class K8SApp:
     def build_ui(self):
         ttk.Label(self.root, text="Contexto:").pack(pady=5)
         self.context_dropdown = ttk.Combobox(self.root, textvariable=self.context_var, width=60)
-        self.context_dropdown.pack(pady=5,padx=10,fill="x")
+        self.context_dropdown.pack(pady=5, padx=10, fill="x")
 
         ttk.Button(self.root, text="Atualizar Contextos", command=self.update_contexts).pack(pady=2)
         ttk.Button(self.root, text="Selecionar Contexto", command=self.select_context).pack(pady=2)
 
         ttk.Label(self.root, text="Namespace:").pack(pady=5)
         self.namespace_dropdown = ttk.Combobox(self.root, textvariable=self.namespace_var, width=60)
-        self.namespace_dropdown.pack(pady=5,padx=10,fill="x")
+        self.namespace_dropdown.pack(pady=5, padx=10, fill="x")
         self.namespace_dropdown.bind("<KeyRelease>", self.filter_namespaces)
         self.namespace_dropdown.bind("<<ComboboxSelected>>", self.update_pods)
 
         ttk.Label(self.root, text="Pod:").pack(pady=5)
         self.pod_dropdown = ttk.Combobox(self.root, textvariable=self.pod_var, width=60)
-        self.pod_dropdown.pack(pady=5,padx=10,fill="x")
+        self.pod_dropdown.pack(pady=5, padx=10, fill="x")
+        self.pod_dropdown.bind("<KeyRelease>", self.filter_pods)
 
         ttk.Label(self.root, text="Serviço:").pack(pady=5)
         self.service_dropdown = ttk.Combobox(self.root, textvariable=self.service_var, width=60)
-        self.service_dropdown.pack(pady=5,padx=10,fill="x")
+        self.service_dropdown.pack(pady=5, padx=10, fill="x")
+        self.service_dropdown.bind("<KeyRelease>", self.filter_services)
 
         button_frame = ttk.Frame(self.root)
         button_frame.pack(pady=10)
@@ -54,7 +56,7 @@ class K8SApp:
         ttk.Button(button_frame, text="Visualizar Serviços", command=self.view_services).grid(row=1, column=3, padx=5, pady=5)
 
         self.log_output = scrolledtext.ScrolledText(self.root, width=100, height=20, font=("Segoe UI", 10))
-        self.log_output.pack(pady=10)
+        self.log_output.pack(pady=10, padx=10, expand=True, fill="both")
         self.log_output.insert("1.0", r"""
  /\_/\   
 ( o.o ) Use commit manual no banco de dados!
@@ -93,7 +95,6 @@ class K8SApp:
             return
 
         self.clear_comboboxes(clear_namespace=True)
-
         self.run_command(f"kubectl config use-context {context}")
         messagebox.showinfo("Sucesso", f"Contexto '{context}' selecionado!")
         self.update_namespaces()
@@ -106,11 +107,30 @@ class K8SApp:
         text = self.namespace_var.get().lower()
         filtered = [ns for ns in self.all_namespaces if text in ns.lower()]
         self.namespace_dropdown['values'] = filtered
-        if len(filtered) == 1 and filtered[0].lower() == text:
-            # Atualiza o valor com o namespace correto e atualiza serviços
-            self.namespace_var.set(filtered[0])
-            self.update_services()
 
+        if event.keysym == "Return" and len(filtered) == 1:
+            self.namespace_var.set(filtered[0])
+            self.update_pods()
+
+    def filter_pods(self, event):
+        text = self.pod_var.get().lower()
+        all_pods = list(self.pod_lookup.keys()) if hasattr(self, 'pod_lookup') else []
+        filtered = [p for p in all_pods if text in p.lower()]
+        self.pod_dropdown['values'] = filtered
+
+        if event.keysym == "Return" and len(filtered) == 1:
+            self.pod_var.set(filtered[0])
+            self.log_output.insert(tk.END, f"\n[INFO] Pod selecionado: {filtered[0]}\n")
+
+    def filter_services(self, event):
+        text = self.service_var.get().lower()
+        all_services = list(self.service_lookup.keys()) if hasattr(self, 'service_lookup') else []
+        filtered = [s for s in all_services if text in s.lower()]
+        self.service_dropdown['values'] = filtered
+
+        if event.keysym == "Return" and len(filtered) == 1:
+            self.service_var.set(filtered[0])
+            self.log_output.insert(tk.END, f"\n[INFO] Serviço selecionado: {filtered[0]}\n")
 
     def update_pods(self, _=None):
         namespace = self.namespace_var.get()
@@ -118,7 +138,6 @@ class K8SApp:
             return
 
         self.clear_comboboxes()
-
         try:
             result = subprocess.run(
                 f"kubectl get pods -n {namespace} -o json",
@@ -131,7 +150,6 @@ class K8SApp:
 
         display_list = []
         self.pod_lookup = {}
-
         for item in pods_json.get("items", []):
             name = item["metadata"]["name"]
             display_list.append(name)
@@ -158,7 +176,6 @@ class K8SApp:
 
         display_list = []
         self.service_lookup = {}
-
         for item in svc_json.get("items", []):
             name = item["metadata"]["name"]
             display_list.append(name)
@@ -168,8 +185,6 @@ class K8SApp:
             messagebox.showinfo("Aviso", "Nenhum serviço encontrado neste namespace.")
 
         self.service_dropdown['values'] = display_list
-
-
 
     def view_log(self):
         self.show_output(f"kubectl logs -n {self.namespace_var.get()} {self.pod_lookup.get(self.pod_var.get(), self.pod_var.get())}")
@@ -203,17 +218,14 @@ class K8SApp:
             self.namespace_dropdown['values'] = []
             self.namespace_var.set("")
 
-
     def port_forward(self):
         namespace = self.namespace_var.get()
         display = self.pod_var.get()
         pod = self.pod_lookup.get(display, display)
-
         port = self.detectar_porta_remota(pod)
         if not port:
             messagebox.showwarning("Aviso", "Não foi possível detectar a porta do pod!")
             return
-
 
         local_port = simpledialog.askstring("Port Forward", f"Informe a porta local:", initialvalue="666")
         if not local_port:
@@ -233,7 +245,6 @@ class K8SApp:
 
         porta_padrao = self.detectar_porta_remota(service)
         remote_port = simpledialog.askstring("Porta Remota", f"Informe a porta do serviço:", initialvalue=porta_padrao or "5432")
-
 
         local_port = simpledialog.askstring("Porta Local", "Informe a porta local:", initialvalue="666")
         if not local_port:
